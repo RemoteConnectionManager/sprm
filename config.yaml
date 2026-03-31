@@ -1,0 +1,18 @@
+upstream:
+  url: "https://github.com/spack/spack.git"
+  base_branch: "develop-2024-02-04"
+
+output_repo:
+  url: "https://github.com"
+  push_branch: "integration-result"
+
+patches:
+  - name: "lxde-lxterminal"
+    origin_name: "updates"
+    origin_url: "https://gitlab.hpc.cineca.it/HpcUserSupport/spack-deploy/clones/updates.git"
+    branch: "packages/lxde-lxterminal"
+  - name: "lxde-gpicview"
+    origin_name: "old_rcm"
+    origin_url: "https://gitlab.hpc.cineca.it/HpcUserSupport/spack-deploy/legacy-clones/old_rcm_spack-fork"
+    branch: "packages/lxde-gpicview"
+
