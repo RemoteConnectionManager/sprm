@@ -9,10 +9,14 @@ output_repo:
 patches:
   - name: "lxde-lxterminal"
     origin_name: "updates"
-    origin_url: "https://gitlab.hpc.cineca.it/HpcUserSupport/spack-deploy/clones/updates.git"
+    # origin_url omitted: autofilled from the first 'updates' entry above
     branch: "packages/lxde-lxterminal"
   - name: "lxde-gpicview"
     origin_name: "old_rcm"
     origin_url: "https://gitlab.hpc.cineca.it/HpcUserSupport/spack-deploy/legacy-clones/old_rcm_spack-fork"
     branch: "packages/lxde-gpicview"
+  - name: "lxde-leafpad"
+    origin_name: "updates"
+    origin_url: "https://gitlab.hpc.cineca.it/HpcUserSupport/spack-deploy/clones/updates.git"
+    branch: "packages/lxde-leafpad"
 
