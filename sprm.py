@@ -13,6 +13,7 @@ class MultiRepoManager:
         
         self.affected_files = set()
         self.successful_patches = []
+        self.repo_urls = {}  # Maps origin_name -> resolved URL
         
         # Setup Logging
         log_level = logging.DEBUG if debug else logging.INFO
@@ -20,6 +21,54 @@ class MultiRepoManager:
         self.logger.setLevel(log_level)
         if not self.logger.handlers:
             self.logger.addHandler(logging.StreamHandler(sys.stdout))
+        
+        # Resolve all repo URLs from config
+        self._resolve_repo_urls()
+
+    def _resolve_repo_urls(self):
+        """
+        Two-pass URL resolution using only the patch list itself.
+        Pass 1: scan all patches that have origin_url, build a registry.
+                Warn if the same origin_name appears with conflicting URLs (use latest).
+        Pass 2: for patches missing origin_url, fill in from the registry.
+                Error out if an origin_name has no URL anywhere in the patch list.
+        """
+        patches = self.config.get('patches', [])
+
+        # Pass 1: collect all explicitly provided URLs
+        for patch in patches:
+            origin_name = patch.get('origin_name')
+            origin_url = patch.get('origin_url')
+            patch_name = patch.get('name', 'unknown')
+
+            if not origin_name:
+                self.logger.error(f"Patch '{patch_name}' missing 'origin_name'")
+                sys.exit(1)
+
+            if origin_url:
+                if origin_name in self.repo_urls and self.repo_urls[origin_name] != origin_url:
+                    self.logger.warning(
+                        f"Origin '{origin_name}' has conflicting URLs: "
+                        f"'{self.repo_urls[origin_name]}' vs '{origin_url}'. Using latest: '{origin_url}'"
+                    )
+                self.repo_urls[origin_name] = origin_url
+
+        # Pass 2: fill in missing origin_url fields from the registry
+        for patch in patches:
+            origin_name = patch.get('origin_name')
+            patch_name = patch.get('name', 'unknown')
+
+            if not patch.get('origin_url'):
+                if origin_name not in self.repo_urls:
+                    self.logger.error(
+                        f"Patch '{patch_name}' references origin_name '{origin_name}' "
+                        f"but no URL for this repo was found in any other patch entry"
+                    )
+                    sys.exit(1)
+                self.logger.debug(
+                    f"Patch '{patch_name}': autofilled origin_url for '{origin_name}' "
+                    f"-> '{self.repo_urls[origin_name]}'"
+                )
 
     def _run(self, args, cwd=None, check=True):
         """Executes git commands with optional CWD (defaults to local_path)."""
@@ -94,37 +143,6 @@ class MultiRepoManager:
             self._run(["checkout", "-B", base_branch, "FETCH_HEAD"])
 
     def apply_patches(self):
-        base = f"upstream/{self.config['upstream']['base_branch']}"
-        
-        for patch in self.config['patches']:
-            self.logger.info(f"--- Processing Patch: {patch['name']} ---")
-            
-            # 1. Ensure remote for this specific patch exists
-            self._run(["remote", "add", patch['origin_name'], patch['origin_url']], check=False)
-            self._run(["remote", "set-url", patch['origin_name'], patch['origin_url']])
-            self._run(["fetch", patch['origin_name']])
-            
-            # 2. Rebase local branch from its specific origin onto the main upstream
-            local_branch = patch['name']
-            remote_ref = f"{patch['origin_name']}/{patch['branch']}"
-            
-            # Create/reset local branch to match its remote source
-            self._run(["checkout", "-B", local_branch, remote_ref])
-            
-            if self._run(["rebase", base]) is None:
-                self.logger.warning(f"Rebase failed for {patch['name']}. Skipping.")
-                self._run(["rebase", "--abort"], check=False)
-                continue
-                
-            self.successful_patches.append(local_branch)
-            
-            # 3. Track affected files
-            diff = self._run(["diff", "--name-only", f"{base}...{local_branch}"])
-            if diff: self.affected_files.update(diff.splitlines())
-
-
-
-    def apply_patches(self):
         base_ref = f"upstream/{self.config['upstream']['base_branch']}"
         
         for patch in self.config['patches']:
@@ -132,7 +150,7 @@ class MultiRepoManager:
             
             # 1. Setup/Update the specific remote for this patch
             name = patch['origin_name']
-            url = patch['origin_url']
+            url = self.repo_urls[name]  # Use resolved URL
             branch = patch['branch']
             
             self._run(["remote", "add", name, url], check=False)
