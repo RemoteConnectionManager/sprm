@@ -3,10 +3,11 @@ import logging
 import sys
 import yaml
 import os
-from datetime import datetime
+import hashlib
+import re
 
 class MultiRepoManager:
-    def __init__(self, config_path, local_path, debug=False):
+    def __init__(self, config_path, local_path, debug=False, refresh_cache=False):
         self.local_path = os.path.abspath(local_path)
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
@@ -14,6 +15,9 @@ class MultiRepoManager:
         self.affected_files = set()
         self.successful_patches = []
         self.repo_urls = {}  # Maps origin_name -> resolved URL
+        self.cache_root = os.path.join(self.local_path, ".sprm_cache")
+        self.url_cache_dirs = {}  # Maps origin_url -> local cache directory
+        self.refresh_cache = refresh_cache  # Force cache refetch if True
         
         # Setup Logging
         log_level = logging.DEBUG if debug else logging.INFO
@@ -69,6 +73,65 @@ class MultiRepoManager:
                     f"Patch '{patch_name}': autofilled origin_url for '{origin_name}' "
                     f"-> '{self.repo_urls[origin_name]}'"
                 )
+
+    def _sanitize_name(self, value):
+        return re.sub(r"[^A-Za-z0-9._-]", "_", value)
+
+    def _cache_dir_for_url(self, url):
+        digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
+        base = os.path.basename(url.rstrip("/")).replace(".git", "") or "repo"
+        return os.path.join(self.cache_root, f"{self._sanitize_name(base)}_{digest}")
+
+    def prepare_patch_caches(self):
+        """
+        Step 1: Build/update URL-based local cache clones for all patch origins.
+        - One cache clone per unique URL
+        - If cache exists, reuse it
+        - Fetch the branches needed by current patch entries (skip if already cached, unless --refresh-cache)
+        """
+        os.makedirs(self.cache_root, exist_ok=True)
+
+        url_to_branches = {}
+        for patch in self.config.get("patches", []):
+            origin_name = patch["origin_name"]
+            branch = patch["branch"]
+            url = self.repo_urls[origin_name]
+            url_to_branches.setdefault(url, set()).add(branch)
+
+        for url, branches in url_to_branches.items():
+            cache_dir = self._cache_dir_for_url(url)
+            self.url_cache_dirs[url] = cache_dir
+
+            if not os.path.exists(os.path.join(cache_dir, ".git")):
+                self.logger.info(f"Creating cache clone for {url}...")
+                parent_dir = os.path.dirname(cache_dir)
+                repo_name = os.path.basename(cache_dir)
+                clone_res = self._run(["clone", "--no-checkout", url, repo_name], cwd=parent_dir)
+                if clone_res is None:
+                    self.logger.critical(f"Failed to create cache for {url}")
+                    sys.exit(1)
+            else:
+                self.logger.info(f"Reusing cache clone for {url}")
+                self._run(["remote", "set-url", "origin", url], cwd=cache_dir)
+
+            for branch in sorted(branches):
+                remote_ref = f"refs/remotes/origin/{branch}"
+                
+                # Check if branch already cached (unless refresh requested)
+                if not self.refresh_cache:
+                    branch_exists = self._run(["show-ref", remote_ref], cwd=cache_dir, check=False)
+                    if branch_exists is not None:
+                        self.logger.info(f"Skipping cached branch {branch} (already in {cache_dir})")
+                        continue
+                
+                self.logger.info(f"Caching branch {branch} from {url}...")
+                fetch_res = self._run(
+                    ["fetch", "origin", f"{branch}:{remote_ref}"],
+                    cwd=cache_dir,
+                )
+                if fetch_res is None:
+                    self.logger.error(f"Could not cache branch '{branch}' from {url}")
+                    sys.exit(1)
 
     def _run(self, args, cwd=None, check=True):
         """Executes git commands with optional CWD (defaults to local_path)."""
@@ -143,27 +206,38 @@ class MultiRepoManager:
             self._run(["checkout", "-B", base_branch, "FETCH_HEAD"])
 
     def apply_patches(self):
+        """
+        Step 2: Apply patches by consuming already-prepared local cache clones.
+        """
         base_ref = f"upstream/{self.config['upstream']['base_branch']}"
         
         for patch in self.config['patches']:
             self.logger.info(f"--- Processing Patch: {patch['name']} ---")
             
-            # 1. Setup/Update the specific remote for this patch
+            # 1. Setup/Update a remote that points to the local cache clone
             name = patch['origin_name']
             url = self.repo_urls[name]  # Use resolved URL
             branch = patch['branch']
+            cache_dir = self.url_cache_dirs.get(url)
+
+            if not cache_dir:
+                self.logger.error(f"Missing cache for {name} ({url}). Run prepare_patch_caches first.")
+                sys.exit(1)
             
-            self._run(["remote", "add", name, url], check=False)
-            self._run(["remote", "set-url", name, url])
+            self._run(["remote", "add", name, cache_dir], check=False)
+            self._run(["remote", "set-url", name, cache_dir])
             
-            # 2. Explicitly fetch and map the remote-tracking reference
-            # This ensures 'name/branch' exists as a valid commit pointer
-            self.logger.info(f"Fetching {branch} from {name}...")
+            # 2. Fetch branch from cache remote into this repository
+            self.logger.info(f"Fetching cached branch {branch} via {name}...")
             remote_ref = f"refs/remotes/{name}/{branch}"
-            fetch_res = self._run(["fetch", name, f"{branch}:{remote_ref}"])
+            fetch_res = self._run([
+                "fetch",
+                name,
+                f"refs/remotes/origin/{branch}:{remote_ref}",
+            ])
             
             if fetch_res is None:
-                self.logger.error(f"Could not fetch {branch} from {name}. Skipping patch.")
+                self.logger.error(f"Could not fetch cached branch {branch} from {name}. Skipping patch.")
                 continue
 
             # 3. Create/Reset local branch and rebase onto the upstream base
@@ -220,10 +294,12 @@ if __name__ == "__main__":
     parser.add_argument("--config", default="config.yaml", help="Path to YAML config")
     parser.add_argument("--path", required=True, help="Local work directory")
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--refresh-cache", action="store_true", help="Force refetch of all cached branches")
     args = parser.parse_args()
 
-    mgr = MultiRepoManager(args.config, args.path, args.debug)
+    mgr = MultiRepoManager(args.config, args.path, args.debug, args.refresh_cache)
     mgr.setup_base()
+    mgr.prepare_patch_caches()
     mgr.apply_patches()
     mgr.create_integration()
     mgr.summary()
