@@ -1,6 +1,6 @@
 upstream:
-  url: "https://github.com/spack/spack.git"
-  base_branch: "develop-2024-02-04"
+  url: "https://github.com/spack/spack-packages.git"
+  base_branch: "develop"
 
 output_repo:
   url: "https://github.com"
@@ -8,18 +8,17 @@ output_repo:
 
 patches:
   - name: "lxde-lxterminal"
-    origin_name: "updates"
+    origin_name: "old_local_rcm_clone"
     # origin_url omitted: autofilled from the first 'updates' entry above
-    branch: "packages/lxde-lxterminal"
+    branch: "packages/lxde-lxterminal_rebased"
   - name: "lxde-gpicview"
-    origin_name: "old_rcm"
-    origin_url: "https://gitlab.hpc.cineca.it/HpcUserSupport/spack-deploy/legacy-clones/old_rcm_spack-fork"
-    branch: "packages/lxde-gpicview"
-  - name: "lxde-leafpad"
-    origin_name: "updates"
-    origin_url: "https://gitlab.hpc.cineca.it/HpcUserSupport/spack-deploy/clones/updates.git"
-    branch: "packages/lxde-leafpad"
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/lxde-gpicview_rebased"
+  - name: "packages/fix_out_of_prefix_xfontsel_xedit"
+    origin_name: "old_local_rcm_clone"
+    origin_url: "/home/lcalori0/spack/old/spack_env_clones/scripts/clones/rcm_021_dev.clone"
+    branch: "packages/fix_out_of_prefix_xfontsel_xedit_rebased"
     restructured: true
-    filter_path: "packages/leafpad"
-    filter_path_rename: "packages/leafpad:packages/lxde-leafpad"
+    filter_path: "var/spack/repos/builtin/packages/"
+    filter_path_rename: "var/spack/repos/builtin/packages/:repos/spack_repo/builtin/packages/"
 
