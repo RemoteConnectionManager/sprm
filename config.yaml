@@ -19,4 +19,7 @@ patches:
     origin_name: "updates"
     origin_url: "https://gitlab.hpc.cineca.it/HpcUserSupport/spack-deploy/clones/updates.git"
     branch: "packages/lxde-leafpad"
+    restructured: true
+    filter_path: "packages/leafpad"
+    filter_path_rename: "packages/leafpad:packages/lxde-leafpad"
 
