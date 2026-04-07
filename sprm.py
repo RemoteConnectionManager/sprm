@@ -5,6 +5,7 @@ import yaml
 import os
 import hashlib
 import re
+import shutil
 
 class MultiRepoManager:
     def __init__(self, config_path, local_path, debug=False, refresh_cache=False):
@@ -14,9 +15,10 @@ class MultiRepoManager:
         
         self.affected_files = set()
         self.successful_patches = []
-        self.repo_urls = {}  # Maps origin_name -> resolved URL
+        self.repo_urls = {}          # Maps origin_name -> resolved URL
         self.cache_root = os.path.join(self.local_path, ".sprm_cache")
-        self.url_cache_dirs = {}  # Maps origin_url -> local cache directory
+        self.url_cache_dirs = {}     # Maps origin_url -> local cache dir (regular patches)
+        self.patch_cache_dirs = {}   # Maps patch name -> cache dir
         self.refresh_cache = refresh_cache  # Force cache refetch if True
         
         # Setup Logging
@@ -77,61 +79,148 @@ class MultiRepoManager:
     def _sanitize_name(self, value):
         return re.sub(r"[^A-Za-z0-9._-]", "_", value)
 
-    def _cache_dir_for_url(self, url):
-        digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
+    def _cache_dir_for_patch(self, url, is_mirror=False, filter_path="", filter_path_rename=""):
+        """Compute a deterministic cache directory path.
+        Mirror caches include filter params in the hash so each
+        (url, filter_path, filter_path_rename) combination gets its own dir."""
+        if is_mirror:
+            key_str = f"{url}|{filter_path}|{filter_path_rename}"
+            suffix = "_mirror"
+        else:
+            key_str = url
+            suffix = ""
+        digest = hashlib.sha1(key_str.encode("utf-8")).hexdigest()[:12]
         base = os.path.basename(url.rstrip("/")).replace(".git", "") or "repo"
-        return os.path.join(self.cache_root, f"{self._sanitize_name(base)}_{digest}")
+        return os.path.join(self.cache_root, f"{self._sanitize_name(base)}_{digest}{suffix}")
 
     def prepare_patch_caches(self):
         """
         Step 1: Build/update URL-based local cache clones for all patch origins.
-        - One cache clone per unique URL
-        - If cache exists, reuse it
-        - Fetch the branches needed by current patch entries (skip if already cached, unless --refresh-cache)
+
+        Regular patches (restructured: false/omitted):
+          - Clone with --no-checkout, one dir per unique URL
+          - Fetch branches idempotently; skip if already cached unless --refresh-cache
+
+        Restructured patches (restructured: true):
+          - Clone with --mirror --no-local into a separate dir keyed on (url+filter params)
+          - Run git filter-repo --path / --path-rename once after clone
+          - Mark completion with .sprm_filtered sentinel file
+          - Mirror caches are immutable; --refresh-cache deletes and recreates them
         """
         os.makedirs(self.cache_root, exist_ok=True)
 
-        url_to_branches = {}
+        # Build a map: (url, is_mirror, filter_path, filter_path_rename) -> set of branches
+        cache_key_to_info = {}
         for patch in self.config.get("patches", []):
             origin_name = patch["origin_name"]
             branch = patch["branch"]
             url = self.repo_urls[origin_name]
-            url_to_branches.setdefault(url, set()).add(branch)
+            is_mirror = patch.get("restructured", False)
+            fp  = patch.get("filter_path", "")        if is_mirror else ""
+            fpr = patch.get("filter_path_rename", "") if is_mirror else ""
+            key = (url, is_mirror, fp, fpr)
+            if key not in cache_key_to_info:
+                cache_key_to_info[key] = {"branches": set(), "filter_path": fp, "filter_path_rename": fpr}
+            cache_key_to_info[key]["branches"].add(branch)
 
-        for url, branches in url_to_branches.items():
-            cache_dir = self._cache_dir_for_url(url)
-            self.url_cache_dirs[url] = cache_dir
+        for (url, is_mirror, fp, fpr), info in cache_key_to_info.items():
+            cache_dir = self._cache_dir_for_patch(url, is_mirror, fp, fpr)
 
-            if not os.path.exists(os.path.join(cache_dir, ".git")):
-                self.logger.info(f"Creating cache clone for {url}...")
+            if not is_mirror:
+                self.url_cache_dirs[url] = cache_dir
+
+            # Determine whether a usable cache already exists
+            has_git_dir  = os.path.isdir(os.path.join(cache_dir, ".git"))
+            is_bare      = os.path.isfile(os.path.join(cache_dir, "HEAD")) and not has_git_dir
+            has_cache    = has_git_dir or is_bare
+
+            # For mirrors: --refresh-cache means delete and rebuild from scratch
+            if is_mirror and has_cache and self.refresh_cache:
+                self.logger.info(f"Refresh requested: removing mirror cache {cache_dir}")
+                shutil.rmtree(cache_dir)
+                has_cache = False
+
+            if not has_cache:
                 parent_dir = os.path.dirname(cache_dir)
-                repo_name = os.path.basename(cache_dir)
-                clone_res = self._run(["clone", "--no-checkout", url, repo_name], cwd=parent_dir)
-                if clone_res is None:
-                    self.logger.critical(f"Failed to create cache for {url}")
-                    sys.exit(1)
-            else:
-                self.logger.info(f"Reusing cache clone for {url}")
-                self._run(["remote", "set-url", "origin", url], cwd=cache_dir)
+                repo_name  = os.path.basename(cache_dir)
 
-            for branch in sorted(branches):
-                remote_ref = f"refs/remotes/origin/{branch}"
-                
-                # Check if branch already cached (unless refresh requested)
-                if not self.refresh_cache:
-                    branch_exists = self._run(["show-ref", remote_ref], cwd=cache_dir, check=False)
-                    if branch_exists is not None:
-                        self.logger.info(f"Skipping cached branch {branch} (already in {cache_dir})")
-                        continue
-                
-                self.logger.info(f"Caching branch {branch} from {url}...")
-                fetch_res = self._run(
-                    ["fetch", "origin", f"{branch}:{remote_ref}"],
-                    cwd=cache_dir,
-                )
-                if fetch_res is None:
-                    self.logger.error(f"Could not cache branch '{branch}' from {url}")
-                    sys.exit(1)
+                if is_mirror:
+                    self.logger.info(f"Creating mirror cache for {url}...")
+                    clone_res = self._run(
+                        ["clone", "--mirror", "--no-local", url, repo_name],
+                        cwd=parent_dir,
+                    )
+                    if clone_res is None:
+                        self.logger.critical(f"Failed to create mirror cache for {url}")
+                        sys.exit(1)
+
+                    self.logger.info(f"Filtering mirror: --path '{fp}' --path-rename '{fpr}'")
+                    filter_res = self._run(
+                        ["filter-repo", "--path", fp, "--path-rename", fpr, "--force"],
+                        cwd=cache_dir,
+                    )
+                    if filter_res is None:
+                        self.logger.critical(f"git filter-repo failed on {cache_dir}")
+                        sys.exit(1)
+                    # Sentinel: signals that filter-repo has already been applied
+                    open(os.path.join(cache_dir, ".sprm_filtered"), "w").close()
+
+                else:
+                    self.logger.info(f"Creating cache clone for {url}...")
+                    clone_res = self._run(
+                        ["clone", "--no-checkout", url, repo_name],
+                        cwd=parent_dir,
+                    )
+                    if clone_res is None:
+                        self.logger.critical(f"Failed to create cache for {url}")
+                        sys.exit(1)
+            else:
+                self.logger.info(f"Reusing {'mirror ' if is_mirror else ''}cache for {url}")
+                if not is_mirror:
+                    self._run(["remote", "set-url", "origin", url], cwd=cache_dir)
+                # Mirror caches are immutable after filter-repo; never update origin
+
+            # Fetch branches -------------------------------------------------------
+            if is_mirror:
+                # Bare/mirror repos already have all branches as refs/heads/ from clone.
+                # Just verify the required ones are present.
+                for branch in sorted(info["branches"]):
+                    exists = self._run(
+                        ["show-ref", f"refs/heads/{branch}"], cwd=cache_dir, check=False
+                    )
+                    if exists is None:
+                        self.logger.error(
+                            f"Branch '{branch}' not found in mirror cache {cache_dir}"
+                        )
+                        sys.exit(1)
+                    self.logger.info(f"Mirror branch '{branch}' confirmed in {cache_dir}")
+            else:
+                for branch in sorted(info["branches"]):
+                    remote_ref = f"refs/remotes/origin/{branch}"
+                    if not self.refresh_cache:
+                        already = self._run(["show-ref", remote_ref], cwd=cache_dir, check=False)
+                        if already is not None:
+                            self.logger.info(
+                                f"Skipping cached branch '{branch}' (already in {cache_dir})"
+                            )
+                            continue
+                    self.logger.info(f"Caching branch '{branch}' from {url}...")
+                    fetch_res = self._run(
+                        ["fetch", "origin", f"{branch}:{remote_ref}"],
+                        cwd=cache_dir,
+                    )
+                    if fetch_res is None:
+                        self.logger.error(f"Could not cache branch '{branch}' from {url}")
+                        sys.exit(1)
+
+        # Build per-patch cache dir lookup used by apply_patches
+        for patch in self.config.get("patches", []):
+            origin_name = patch["origin_name"]
+            url = self.repo_urls[origin_name]
+            is_mirror = patch.get("restructured", False)
+            fp  = patch.get("filter_path", "")        if is_mirror else ""
+            fpr = patch.get("filter_path_rename", "") if is_mirror else ""
+            self.patch_cache_dirs[patch["name"]] = self._cache_dir_for_patch(url, is_mirror, fp, fpr)
 
     def _run(self, args, cwd=None, check=True):
         """Executes git commands with optional CWD (defaults to local_path)."""
@@ -208,56 +297,111 @@ class MultiRepoManager:
     def apply_patches(self):
         """
         Step 2: Apply patches by consuming already-prepared local cache clones.
+
+        Regular patches:     fetch from regular cache → checkout → rebase onto upstream base
+        Restructured patches: fetch from filtered mirror cache → checkout clean branch from
+                             upstream base → cherry-pick commits in range (last tag .. branch tip)
         """
         base_ref = f"upstream/{self.config['upstream']['base_branch']}"
-        
+
         for patch in self.config['patches']:
             self.logger.info(f"--- Processing Patch: {patch['name']} ---")
-            
-            # 1. Setup/Update a remote that points to the local cache clone
-            name = patch['origin_name']
-            url = self.repo_urls[name]  # Use resolved URL
-            branch = patch['branch']
-            cache_dir = self.url_cache_dirs.get(url)
+
+            name          = patch['origin_name']
+            url           = self.repo_urls[name]
+            branch        = patch['branch']
+            local_branch  = patch['name']
+            is_restructured = patch.get('restructured', False)
+            cache_dir     = self.patch_cache_dirs.get(local_branch)
 
             if not cache_dir:
-                self.logger.error(f"Missing cache for {name} ({url}). Run prepare_patch_caches first.")
+                self.logger.error(
+                    f"Missing cache for patch '{local_branch}'. Run prepare_patch_caches first."
+                )
                 sys.exit(1)
-            
-            self._run(["remote", "add", name, cache_dir], check=False)
-            self._run(["remote", "set-url", name, cache_dir])
-            
-            # 2. Fetch branch from cache remote into this repository
-            self.logger.info(f"Fetching cached branch {branch} via {name}...")
-            remote_ref = f"refs/remotes/{name}/{branch}"
-            fetch_res = self._run([
-                "fetch",
-                name,
-                f"refs/remotes/origin/{branch}:{remote_ref}",
-            ])
-            
-            if fetch_res is None:
-                self.logger.error(f"Could not fetch cached branch {branch} from {name}. Skipping patch.")
-                continue
 
-            # 3. Create/Reset local branch and rebase onto the upstream base
-            local_branch = patch['name']
-            
-            # Checkout the patch branch (using the explicit remote ref we just fetched)
-            if self._run(["checkout", "-B", local_branch, f"{name}/{branch}"]) is None:
-                self.logger.error(f"Failed to checkout {local_branch}. Skipping.")
-                continue
-            
-            # Rebase onto the verified upstream base
-            self.logger.info(f"Rebasing {local_branch} onto {base_ref}...")
-            if self._run(["rebase", base_ref]) is None:
-                self.logger.warning(f"Rebase conflict in {local_branch}. Aborting.")
-                self._run(["rebase", "--abort"], check=False)
-                continue
-                
+            # Point a remote at the local cache clone
+            self._run(["remote", "add",     name, cache_dir], check=False)
+            self._run(["remote", "set-url", name, cache_dir])
+
+            remote_ref = f"refs/remotes/{name}/{branch}"
+
+            if is_restructured:
+                # ---- Restructured path: cherry-pick ----------------------------
+                # Mirror (bare) repos expose branches as refs/heads/, not refs/remotes/origin/
+                self.logger.info(f"Fetching filtered branch '{branch}' from mirror cache via '{name}'...")
+                fetch_res = self._run([
+                    "fetch", name,
+                    f"refs/heads/{branch}:{remote_ref}",
+                ])
+                if fetch_res is None:
+                    self.logger.error(
+                        f"Could not fetch filtered branch '{branch}' from '{name}'. Skipping."
+                    )
+                    continue
+
+                # Start from a clean branch rooted at the upstream base
+                if self._run(["checkout", "-B", local_branch, base_ref]) is None:
+                    self.logger.error(f"Failed to checkout '{local_branch}' from {base_ref}. Skipping.")
+                    continue
+
+                # Determine commit range: last reachable tag → tip of remote branch
+                remote_branch_ref = f"{name}/{branch}"
+                last_tag = self._run(
+                    ["describe", "--tags", "--abbrev=0", remote_branch_ref], check=False
+                )
+                if last_tag is None:
+                    self.logger.error(
+                        f"No tags found on '{remote_branch_ref}'. "
+                        f"Cannot determine cherry-pick range. Skipping."
+                    )
+                    continue
+
+                commits_out = self._run(
+                    ["log", f"{last_tag}..{remote_branch_ref}", "--format=%H"]
+                )
+                commits = [c for c in (commits_out or "").splitlines() if c][::-1]  # oldest first
+
+                if not commits:
+                    self.logger.warning(
+                        f"No commits in range '{last_tag}..{remote_branch_ref}'. Nothing to cherry-pick."
+                    )
+                    continue
+
+                self.logger.info(
+                    f"Cherry-picking {len(commits)} commit(s) from '{last_tag}..{remote_branch_ref}'..."
+                )
+                if self._run(["cherry-pick"] + commits) is None:
+                    self.logger.warning(f"Cherry-pick conflict in '{local_branch}'. Aborting.")
+                    self._run(["cherry-pick", "--abort"], check=False)
+                    continue
+
+            else:
+                # ---- Standard path: rebase -------------------------------------
+                self.logger.info(f"Fetching cached branch '{branch}' via '{name}'...")
+                fetch_res = self._run([
+                    "fetch", name,
+                    f"refs/remotes/origin/{branch}:{remote_ref}",
+                ])
+                if fetch_res is None:
+                    self.logger.error(
+                        f"Could not fetch cached branch '{branch}' from '{name}'. Skipping."
+                    )
+                    continue
+
+                if self._run(["checkout", "-B", local_branch, f"{name}/{branch}"]) is None:
+                    self.logger.error(f"Failed to checkout '{local_branch}'. Skipping.")
+                    continue
+
+                self.logger.info(f"Rebasing '{local_branch}' onto {base_ref}...")
+                if self._run(["rebase", base_ref]) is None:
+                    self.logger.warning(f"Rebase conflict in '{local_branch}'. Aborting.")
+                    self._run(["rebase", "--abort"], check=False)
+                    continue
+
             self.successful_patches.append(local_branch)
-            
-            # 4. Extract affected files
+
+            # Track affected files
             diff = self._run(["diff", "--name-only", f"{base_ref}...{local_branch}"])
             if diff:
                 self.affected_files.update(diff.splitlines())
