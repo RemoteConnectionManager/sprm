@@ -38,14 +38,24 @@ class MultiRepoManager:
                 Warn if the same origin_name appears with conflicting URLs (use latest).
         Pass 2: for patches missing origin_url, fill in from the registry.
                 Error out if an origin_name has no URL anywhere in the patch list.
+
+        Additionally, pass 1/pass 2 propagate these optional patch-level fields
+        across entries sharing the same origin_name:
+          - restructured
+          - filter_path
+          - filter_path_rename
         """
         patches = self.config.get('patches', [])
+        origin_patch_opts = {}
 
-        # Pass 1: collect all explicitly provided URLs
+        # Pass 1: collect explicitly provided URL and per-origin patch options
         for patch in patches:
             origin_name = patch.get('origin_name')
             origin_url = patch.get('origin_url')
             patch_name = patch.get('name', 'unknown')
+            restructured = patch.get('restructured')
+            filter_path = patch.get('filter_path')
+            filter_path_rename = patch.get('filter_path_rename')
 
             if not origin_name:
                 self.logger.error(f"Patch '{patch_name}' missing 'origin_name'")
@@ -59,7 +69,41 @@ class MultiRepoManager:
                     )
                 self.repo_urls[origin_name] = origin_url
 
-        # Pass 2: fill in missing origin_url fields from the registry
+            if origin_name not in origin_patch_opts:
+                origin_patch_opts[origin_name] = {
+                    'restructured': None,
+                    'filter_path': None,
+                    'filter_path_rename': None,
+                }
+
+            if restructured is not None:
+                prev = origin_patch_opts[origin_name]['restructured']
+                if prev is not None and prev != restructured:
+                    self.logger.warning(
+                        f"Origin '{origin_name}' has conflicting 'restructured' values: "
+                        f"'{prev}' vs '{restructured}'. Using latest: '{restructured}'"
+                    )
+                origin_patch_opts[origin_name]['restructured'] = restructured
+
+            if filter_path:
+                prev = origin_patch_opts[origin_name]['filter_path']
+                if prev and prev != filter_path:
+                    self.logger.warning(
+                        f"Origin '{origin_name}' has conflicting 'filter_path' values: "
+                        f"'{prev}' vs '{filter_path}'. Using latest: '{filter_path}'"
+                    )
+                origin_patch_opts[origin_name]['filter_path'] = filter_path
+
+            if filter_path_rename:
+                prev = origin_patch_opts[origin_name]['filter_path_rename']
+                if prev and prev != filter_path_rename:
+                    self.logger.warning(
+                        f"Origin '{origin_name}' has conflicting 'filter_path_rename' values: "
+                        f"'{prev}' vs '{filter_path_rename}'. Using latest: '{filter_path_rename}'"
+                    )
+                origin_patch_opts[origin_name]['filter_path_rename'] = filter_path_rename
+
+        # Pass 2: fill in missing fields from per-origin registries
         for patch in patches:
             origin_name = patch.get('origin_name')
             patch_name = patch.get('name', 'unknown')
@@ -71,10 +115,42 @@ class MultiRepoManager:
                         f"but no URL for this repo was found in any other patch entry"
                     )
                     sys.exit(1)
+                patch['origin_url'] = self.repo_urls[origin_name]
                 self.logger.debug(
                     f"Patch '{patch_name}': autofilled origin_url for '{origin_name}' "
                     f"-> '{self.repo_urls[origin_name]}'"
                 )
+
+            origin_opts = origin_patch_opts.get(origin_name, {})
+
+            if patch.get('restructured') is None and origin_opts.get('restructured') is not None:
+                patch['restructured'] = origin_opts['restructured']
+                self.logger.debug(
+                    f"Patch '{patch_name}': autofilled restructured for '{origin_name}' "
+                    f"-> '{origin_opts['restructured']}'"
+                )
+
+            if patch.get('filter_path') is None and origin_opts.get('filter_path'):
+                patch['filter_path'] = origin_opts['filter_path']
+                self.logger.debug(
+                    f"Patch '{patch_name}': autofilled filter_path for '{origin_name}' "
+                    f"-> '{origin_opts['filter_path']}'"
+                )
+
+            if patch.get('filter_path_rename') is None and origin_opts.get('filter_path_rename'):
+                patch['filter_path_rename'] = origin_opts['filter_path_rename']
+                self.logger.debug(
+                    f"Patch '{patch_name}': autofilled filter_path_rename for '{origin_name}' "
+                    f"-> '{origin_opts['filter_path_rename']}'"
+                )
+
+            if patch.get('restructured', False):
+                if not patch.get('filter_path') or not patch.get('filter_path_rename'):
+                    self.logger.error(
+                        f"Patch '{patch_name}' is restructured but missing filter_path/filter_path_rename "
+                        f"(and no values were found for origin '{origin_name}')"
+                    )
+                    sys.exit(1)
 
     def _sanitize_name(self, value):
         return re.sub(r"[^A-Za-z0-9._-]", "_", value)
