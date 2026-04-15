@@ -14,9 +14,12 @@ $(VENV)/bin/activate: requirements.txt
 
 setup: $(VENV)/bin/activate
 
+config_merged.yaml: setup merge_blame.py config_general.yaml config_rcm_old.yaml
+	$(PYTHON) merge_blame.py config_general.yaml config_rcm_old.yaml > config_merged.yaml
+
 # Example run command using the config file
-run: setup
-	$(PYTHON) git_sync.py --config config.yaml --path ./workdir --debug
+run_cluster: setup config_merged.yaml
+	$(PYTHON) sprm.py --config config_merged.yaml --path $TMPDIR/$USER/spack_rcm_packages
 
 clean:
 	rm -rf $(VENV)
