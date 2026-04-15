@@ -2,6 +2,19 @@ import sys
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
+
+def _add_blame_comment(container, key_or_index, blame):
+    """Add blame as EOL comment only when no comment is already present.
+
+    This keeps existing source comments intact instead of replacing them.
+    """
+    ca_items = getattr(getattr(container, "ca", None), "items", None)
+    if isinstance(ca_items, dict):
+        existing = ca_items.get(key_or_index)
+        if existing and any(part is not None for part in existing):
+            return
+    container.yaml_add_eol_comment(blame, key_or_index)
+
 def merge_with_blame(source, target, filename):
     """
     Merge ricorsivo di 'source' in 'target' con tracciamento file:linea.
@@ -20,7 +33,7 @@ def merge_with_blame(source, target, filename):
             else:
                 # Altrimenti aggiungi il nuovo valore e il commento EOL
                 target[key] = value
-                target.yaml_add_eol_comment(blame, key)
+                _add_blame_comment(target, key, blame)
 
     # CASO 2: Entrambi sono Liste (Sequenze)
     elif isinstance(source, CommentedSeq) and isinstance(target, CommentedSeq):
@@ -34,7 +47,7 @@ def merge_with_blame(source, target, filename):
             new_index = len(target) - 1
             
             # Per le liste, il commento EOL si aggiunge tramite l'indice
-            target.yaml_add_eol_comment(blame, new_index)
+            _add_blame_comment(target, new_index, blame)
 
 def main(file_paths):
     yaml = YAML()
@@ -59,12 +72,12 @@ def _add_initial_blame(obj, filename):
     if isinstance(obj, CommentedMap):
         for k in obj.keys():
             ln = obj.lc.item(k)[0] + 1 if obj.lc.item(k) else "?"
-            obj.yaml_add_eol_comment(f" [from {filename}:{ln}]", k)
+            _add_blame_comment(obj, k, f" [from {filename}:{ln}]")
             _add_initial_blame(obj[k], filename)
     elif isinstance(obj, CommentedSeq):
         for i in range(len(obj)):
             ln = obj.lc.item(i)[0] + 1 if obj.lc.item(i) else "?"
-            obj.yaml_add_eol_comment(f" [from {filename}:{ln}]", i)
+            _add_blame_comment(obj, i, f" [from {filename}:{ln}]")
             _add_initial_blame(obj[i], filename)
 
 if __name__ == "__main__":
