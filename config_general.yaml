@@ -1,6 +1,6 @@
 upstream:
   url: "https://github.com/spack/spack-packages.git"
-  base_branch: "develop"
+  base_branch: "releases/v2026.02"
 
 output_repo:
   url: "https://github.com"
@@ -22,7 +22,7 @@ local_folders:
 patches:
   fix_out_of_prefix_xfontsel_xedit:
     origin_name: "old_local_rcm_clone"
-    origin_url: "/home/lcalori0/spack/old/spack_env_clones/scripts/clones/rcm_021_dev.clone"
+    origin_url: "../spack_env_clones/scripts/clones/rcm_021_dev.clone"
     restructured: true
     filter_path: "var/spack/repos/builtin/packages/"
     filter_path_rename: "var/spack/repos/builtin/packages/:repos/spack_repo/builtin/packages/"
