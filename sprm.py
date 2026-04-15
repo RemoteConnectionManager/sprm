@@ -248,9 +248,10 @@ class MultiRepoManager:
 
                 if is_mirror:
                     self.logger.info(f"Creating mirror cache for {url}...")
+                    if os.path.exists(url):
+                        url=os.path.realpath(url)
                     clone_res = self._run(
-                        ["clone", "--mirror", "--no-local", url, repo_name],
-                        cwd=parent_dir,
+                        ["clone", "--mirror", "--no-local", url, os.path.join(parent_dir,repo_name)],
                     )
                     if clone_res is None:
                         self.logger.critical(f"Failed to create mirror cache for {url}")
