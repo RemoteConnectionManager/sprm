@@ -1,4 +1,6 @@
 # requirements.txt
 PyYAML==6.0.1
 git-filter-repo
+ruamel.yaml
+deepdiff
 
