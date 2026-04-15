@@ -1,0 +1,29 @@
+upstream:
+  url: "https://github.com/spack/spack-packages.git"
+  base_branch: "develop"
+
+output_repo:
+  url: "https://github.com"
+  push_branch: "integration-result"
+
+local_folders:
+  path: "./workdir"
+  # Optional clone path selector.
+  # - missing/empty -> defaults to "clone"
+  # - absolute path -> used as is
+  # - relative path -> joined to local_folders.path
+  clone: "clone"
+  # Optional repo path selector.
+  # - missing/empty -> repo action disabled
+  # - absolute path -> used as is
+  # - relative path -> joined to local_folders.path
+  # repo: "repo"
+
+patches:
+  fix_out_of_prefix_xfontsel_xedit:
+    origin_name: "old_local_rcm_clone"
+    origin_url: "/home/lcalori0/spack/old/spack_env_clones/scripts/clones/rcm_021_dev.clone"
+    restructured: true
+    filter_path: "var/spack/repos/builtin/packages/"
+    filter_path_rename: "var/spack/repos/builtin/packages/:repos/spack_repo/builtin/packages/"
+

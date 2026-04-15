@@ -1,0 +1,52 @@
+
+patches:
+  lxde-icon-theme:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/0.16/lxde-icon-theme_rebased"
+  paraview_cuda12:
+    origin_name: "old_local_rcm_clone"
+    # origin_url omitted: autofilled from the first 'updates' entry above
+    branch: "fix/paraview_cuda12_rebased"
+  fix_rust_system_openssl:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/dev/fix_rust_system_openssl_rebased"
+  libjpeg_turbo_java:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/dev/libjpeg_turbo_java_rebased"
+  lxde-openbox:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/dev/lxde-openbox_rebased"
+  xkbcomp:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/dev/xkbcomp_rebased"
+  xkeyboard-config:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/dev/xkeyboard-config_rebased"
+  fix_out_of_prefix_xfontsel_xedit:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/fix_out_of_prefix_xfontsel_xedit_rebased"
+  imagemagick:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/imagemagick_rebased"
+  lxde-gpicview:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/lxde-gpicview_rebased"
+  lxde-leafpad:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/lxde-leafpad_rebased"
+  lxde-lxterminal:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/lxde-lxterminal_rebased"
+  lxde-pcmanfm:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/lxde-pcmanfm_rebased"
+  lxde-tint2:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/lxde-tint2_rebased"
+  pam:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/pam_rebased"
+  turbovnc:
+    origin_name: "old_local_rcm_clone"
+    branch: "packages/turbovnc_rebased"
+
