@@ -6,58 +6,71 @@ output_repo:
   url: "https://github.com"
   push_branch: "integration-result"
 
+local_folders:
+  path: "./workdir"
+  # Optional clone path selector.
+  # - missing/empty -> defaults to "clone"
+  # - absolute path -> used as is
+  # - relative path -> joined to local_folders.path
+  clone: "clone"
+  # Optional repo path selector.
+  # - missing/empty -> repo action disabled
+  # - absolute path -> used as is
+  # - relative path -> joined to local_folders.path
+  # repo: "repo"
+
 patches:
-  - name: "paraview_cuda12"
+  paraview_cuda12:
     origin_name: "old_local_rcm_clone"
-    # origin_url omitted: autofilled from the first 'updates' entry above
+    # origin_url omitted: autofilled from the first entry that defines it
     branch: "fix/paraview_cuda12_rebased"
-  - name: "lxde-icon-theme"
+  lxde-icon-theme:
     origin_name: "old_local_rcm_clone"
     branch: "packages/0.16/lxde-icon-theme_rebased"
-  - name: "fix_rust_system_openssl"
+  fix_rust_system_openssl:
     origin_name: "old_local_rcm_clone"
     branch: "packages/dev/fix_rust_system_openssl_rebased"
-  - name: "libjpeg_turbo_java"
+  libjpeg_turbo_java:
     origin_name: "old_local_rcm_clone"
     branch: "packages/dev/libjpeg_turbo_java_rebased"
-  - name: "lxde-openbox"
+  lxde-openbox:
     origin_name: "old_local_rcm_clone"
     branch: "packages/dev/lxde-openbox_rebased"
-  - name: "xkbcomp"
+  xkbcomp:
     origin_name: "old_local_rcm_clone"
     branch: "packages/dev/xkbcomp_rebased"
-  - name: "xkeyboard-config"
+  xkeyboard-config:
     origin_name: "old_local_rcm_clone"
     branch: "packages/dev/xkeyboard-config_rebased"
-  - name: "fix_out_of_prefix_xfontsel_xedit"
+  fix_out_of_prefix_xfontsel_xedit:
     origin_name: "old_local_rcm_clone"
     origin_url: "/home/lcalori0/spack/old/spack_env_clones/scripts/clones/rcm_021_dev.clone"
     branch: "packages/fix_out_of_prefix_xfontsel_xedit_rebased"
     restructured: true
     filter_path: "var/spack/repos/builtin/packages/"
     filter_path_rename: "var/spack/repos/builtin/packages/:repos/spack_repo/builtin/packages/"
-  - name: "imagemagick"
+  imagemagick:
     origin_name: "old_local_rcm_clone"
     branch: "packages/imagemagick_rebased"
-  - name: "lxde-gpicview"
+  lxde-gpicview:
     origin_name: "old_local_rcm_clone"
     branch: "packages/lxde-gpicview_rebased"
-  - name: "lxde-leafpad"
+  lxde-leafpad:
     origin_name: "old_local_rcm_clone"
     branch: "packages/lxde-leafpad_rebased"
-  - name: "lxde-lxterminal"
+  lxde-lxterminal:
     origin_name: "old_local_rcm_clone"
     branch: "packages/lxde-lxterminal_rebased"
-  - name: "lxde-pcmanfm"
+  lxde-pcmanfm:
     origin_name: "old_local_rcm_clone"
     branch: "packages/lxde-pcmanfm_rebased"
-  - name: "lxde-tint2"
+  lxde-tint2:
     origin_name: "old_local_rcm_clone"
     branch: "packages/lxde-tint2_rebased"
-  - name: "pam"
+  pam:
     origin_name: "old_local_rcm_clone"
     branch: "packages/pam_rebased"
-  - name: "turbovnc"
+  turbovnc:
     origin_name: "old_local_rcm_clone"
     branch: "packages/turbovnc_rebased"
 

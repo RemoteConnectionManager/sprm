@@ -28,8 +28,34 @@ class MultiRepoManager:
         if not self.logger.handlers:
             self.logger.addHandler(logging.StreamHandler(sys.stdout))
         
+        # Normalize patches from dict-keyed YAML to internal list format
+        self._normalize_patches()
         # Resolve all repo URLs from config
         self._resolve_repo_urls()
+
+    def _normalize_patches(self):
+        """Convert patches from dict-keyed YAML schema to internal list of dicts.
+
+        YAML schema (new):
+          patches:
+            <name>:
+              origin_name: ...
+              branch: ...
+
+        Internal representation (unchanged rest of code):
+          [{'name': '<name>', 'origin_name': ..., 'branch': ...}, ...]
+        """
+        raw = self.config.get('patches', {})
+        if isinstance(raw, dict):
+            patches = []
+            for name, fields in raw.items():
+                entry = dict(fields or {})
+                entry['name'] = name
+                patches.append(entry)
+            self.config['patches'] = patches
+        elif not isinstance(raw, list):
+            self.logger.error("'patches' must be a YAML dict (name: fields) or list")
+            sys.exit(1)
 
     def _resolve_repo_urls(self):
         """
@@ -508,16 +534,86 @@ class MultiRepoManager:
         for f in self.affected_files:
             self.logger.info(f"\n file-->{f}")
 
+
+def resolve_local_folders(cfg):
+    """Normalize local_folders settings and compute effective clone/repo paths.
+
+    Supported schema:
+      local_folders:
+        path: ./workdir
+        clone: clone_subdir_or_abs_path      # optional, defaults to "clone"
+        repo:  repo_subdir_or_abs_path       # optional, no default
+
+    """
+    local_folders = cfg.get("local_folders") or {}
+    if not isinstance(local_folders, dict):
+        local_folders = {}
+
+    path = local_folders.get("path")
+    local_folders["path"] = path
+
+    def _resolve_path(value, base_path):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            v = value.strip()
+            if not v:
+                return None
+            if os.path.isabs(v):
+                return os.path.abspath(v)
+            if not base_path:
+                return None
+            return os.path.abspath(os.path.join(base_path, v))
+        return None
+
+    base_path = os.path.abspath(path) if path else None
+
+    # clone: default to "clone" when missing/empty
+    clone_value = local_folders.get("clone")
+    if isinstance(clone_value, dict):
+        # Backward-compatible support: if older dict syntax is present, read path key.
+        clone_value = clone_value.get("path")
+    if not isinstance(clone_value, str) or not clone_value.strip():
+        clone_value = "clone"
+    local_folders["clone"] = clone_value
+
+    clone_path = _resolve_path(clone_value, base_path)
+    if clone_path is None:
+        raise ValueError("Unable to resolve local_folders.clone path; define local_folders.path for relative clone values")
+    local_folders["clone_path"] = clone_path
+
+    # repo: optional, no default. Missing/empty means disabled.
+    repo_value = local_folders.get("repo")
+    if isinstance(repo_value, dict):
+        # Backward-compatible support: if older dict syntax is present, read path key.
+        repo_value = repo_value.get("path")
+    repo_path = _resolve_path(repo_value, base_path)
+    local_folders["repo_path"] = repo_path
+
+    return local_folders
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="config.yaml", help="Path to YAML config")
-    parser.add_argument("--path", required=True, help="Local work directory")
+    parser.add_argument("--path", help="Local work directory (overrides local_folders.path in config)")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--refresh-cache", action="store_true", help="Force refetch of all cached branches")
     args = parser.parse_args()
 
-    mgr = MultiRepoManager(args.config, args.path, args.debug, args.refresh_cache)
+    with open(args.config, 'r') as f:
+        cfg = yaml.safe_load(f) or {}
+
+    try:
+        local_folders = resolve_local_folders(cfg)
+    except ValueError as e:
+        parser.error(str(e))
+
+    work_path = args.path or local_folders.get("clone_path")
+    if not work_path:
+        parser.error("Missing local work directory: set --path or define local_folders.path/clone in config.yaml")
+
+    mgr = MultiRepoManager(args.config, work_path, args.debug, args.refresh_cache)
     mgr.setup_base()
     mgr.prepare_patch_caches()
     mgr.apply_patches()
