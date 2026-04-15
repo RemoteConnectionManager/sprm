@@ -13,7 +13,7 @@ class MultiRepoManager:
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
         
-        self.affected_files = set()
+        self.affected_files = {}   # Maps filename -> list of patch names that touch it
         self.successful_patches = []
         self.repo_urls = {}          # Maps origin_name -> resolved URL
         self.cache_root = os.path.join(self.local_path, ".sprm_cache")
@@ -506,7 +506,8 @@ class MultiRepoManager:
             # Track affected files
             diff = self._run(["diff", "--name-only", f"{base_ref}...{local_branch}"])
             if diff:
-                self.affected_files.update(diff.splitlines())
+                for fname in diff.splitlines():
+                    self.affected_files.setdefault(fname, []).append(local_branch)
 
 
     def create_integration(self):
@@ -529,10 +530,13 @@ class MultiRepoManager:
 
     def summary(self):
         self.logger.info("\n=== SUCCESSFUL PATCHES ===")
-        for p in self.successful_patches: self.logger.info(f" - {p}")
+        for p in self.successful_patches:
+            self.logger.info(f" - {p}")
         self.logger.info(f"\nTotal affected files: {len(self.affected_files)}")
-        for f in self.affected_files:
-            self.logger.info(f"\n file-->{f}")
+        for fname, patches in sorted(self.affected_files.items()):
+            self.logger.info(f"  {fname}")
+            for p in patches:
+                self.logger.info(f"    <- {p}")
 
 
 def resolve_local_folders(cfg):
