@@ -1,56 +1,67 @@
-import subprocess
 import os
+import sys
+import argparse
 
-def introspect_colleague_spack(spack_root):
-    spack_bin = os.path.join(spack_root, 'bin', 'spack')
+class SpackIntrospector:
+    def __init__(self, spack_root):
+        self.spack_root = os.path.abspath(spack_root)
+        self._setup_spack_context()
+
+    def _setup_spack_context(self):
+        """Injects the target Spack libraries into the Python path."""
+        if not os.path.isdir(self.spack_root):
+            raise ValueError(f"Spack root not found: {self.spack_root}")
+
+        # Spack library paths
+        lib_path = os.path.join(self.spack_root, "lib", "spack")
+        ext_path = os.path.join(lib_path, "external")
+
+        # Insert paths at the beginning to override any local spack installs
+        sys.path.insert(0, lib_path)
+        sys.path.insert(0, ext_path)
+
+        # SPACK_ROOT must point to the target instance for $spack resolution
+        os.environ["SPACK_ROOT"] = self.spack_root
+
+    def get_paths(self):
+        """Retrieves canonicalized installation and cache paths."""
+        try:
+            import spack.config
+            import spack.util.path
+
+            # Retrieve config values
+            it_raw = spack.config.get("config:install_tree:root")
+            sc_raw = spack.config.get("config:source_cache") or \
+                     os.path.join("$spack", "var", "spack", "cache")
+
+            # Resolve internal variables ($spack, etc.)
+            return {
+                "install_tree": spack.util.path.canonicalize_path(it_raw),
+                "source_cache": spack.util.path.canonicalize_path(sc_raw)
+            }
+        except ImportError as e:
+            print(f"Error: Could not import Spack modules from {self.spack_root}")
+            print(f"Details: {e}")
+            sys.exit(1)
+
+def main():
+    parser = argparse.ArgumentParser(description="Introspect an existing Spack installation.")
+    parser.add_argument("spack_root", help="Path to the colleague's Spack root directory")
     
-    if not os.path.exists(spack_bin):
-        print(f"Error: Spack executable not found at {spack_bin}")
-        return None
-
-    # The internal logic
-    internal_script = """
-import spack.config
-import spack.util.path
-import os
-
-# Get and resolve the paths
-it_raw = spack.config.get('config:install_tree:root')
-sc_raw = spack.config.get('config:source_cache') or os.path.join('$spack', 'var', 'spack', 'cache')
-
-print(f"INSTALL_TREE:{spack.util.path.canonicalize_path(it_raw)}")
-print(f"SOURCE_CACHE:{spack.util.path.canonicalize_path(sc_raw)}")
-"""
+    args = parser.parse_args()
 
     try:
-        # We use input=internal_script to pipe the code into stdin
-        # This avoids the "multiple statements" syntax error
-        process = subprocess.run(
-            [spack_bin, 'python'],
-            input=internal_script,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        print(process.stdout)
+        introspector = SpackIntrospector(args.spack_root)
+        paths = introspector.get_paths()
+
+        print(f"Target Spack Root: {args.spack_root}")
+        print("-" * 40)
+        print(f"Installation Tree: {paths['install_tree']}")
+        print(f"Source Cache:      {paths['source_cache']}")
         
-        # Parse the resulting lines
-        paths = {}
-        for line in process.stdout.strip().split('\n'):
-            if ':' in line:
-                key, val = line.split(':', 1)
-                paths[key.strip()] = val.strip()
-        
-        return paths
+    except Exception as e:
+        print(f"Failed: {e}")
+        sys.exit(1)
 
-    except subprocess.CalledProcessError as e:
-        print(f"Error executing spack python:\n{e.stderr}")
-        return None
-
-# --- Usage ---
-colleague_root = "/pitagora_scratch/userinternal/jfrassi1/spack-1.1.1-lisa_v2"
-results = introspect_colleague_spack(colleague_root)
-
-if results:
-    print(f"Found Installation Tree: {results.get('INSTALL_TREE')}")
-    print(f"Found Source Cache:      {results.get('SOURCE_CACHE')}")
+if __name__ == "__main__":
+    main()
