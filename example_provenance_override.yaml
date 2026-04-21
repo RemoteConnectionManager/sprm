@@ -1,0 +1,11 @@
+service:
+  mode: override
+  details: replaced-by-scalar
+  description: |
+    Override description line 1
+    Override description line 2
+
+packages:
+  - beta
+
+shape: flattened

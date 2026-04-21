@@ -1,0 +1,16 @@
+service:
+  mode: base
+  details:
+    owner: team-a
+    retries: 2
+  description: |
+    Base description line 1
+    Base description line 2
+
+packages:
+  - alpha
+
+shape:
+  nested:
+    enabled: true
+    level: 1

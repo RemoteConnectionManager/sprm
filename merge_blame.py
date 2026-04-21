@@ -8,6 +8,9 @@ from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
 
+BLAME_PATTERN = re.compile(r"\[from\s+([^:\]]+):([^\]]+)\]")
+
+
 def _add_blame_comment(container, key_or_index, blame):
     """Append blame to existing EOL comment, preserving prior comment text."""
     ca_items = getattr(getattr(container, "ca", None), "items", None)
@@ -28,8 +31,15 @@ def _add_blame_comment(container, key_or_index, blame):
     if blame_text.startswith("#"):
         blame_text = blame_text[1:].strip()
 
-    if existing_text:
-        normalized_existing = existing_text[1:].strip() if existing_text.startswith("#") else existing_text
+    existing_without_blame = BLAME_PATTERN.sub("", existing_text)
+    existing_without_blame = re.sub(r"\s+", " ", existing_without_blame).strip()
+
+    if existing_without_blame:
+        normalized_existing = (
+            existing_without_blame[1:].strip()
+            if existing_without_blame.startswith("#")
+            else existing_without_blame
+        )
         if blame_text in normalized_existing:
             return
         combined = f"{normalized_existing} {blame_text}".strip()
@@ -54,14 +64,13 @@ def _should_colorize_blame(mode):
 def _colorize_blame_comments(text):
     """Color entire lines based on source file provenance."""
     palette = [31, 32, 33, 34, 35, 36, 91, 92, 93, 94, 95, 96]
-    blame_pattern = re.compile(r"\[from\s+([^:\]]+):([^\]]+)\]")
     lines = text.split('\n')
     colored_lines = []
 
     for line in lines:
-        match = blame_pattern.search(line)
-        if match:
-            filename = match.group(1)
+        matches = BLAME_PATTERN.findall(line)
+        if matches:
+            filename, _ = matches[-1]
             digest = hashlib.sha1(filename.encode("utf-8")).digest()
             color = palette[digest[0] % len(palette)]
             colored_line = f"\x1b[{color}m{line}\x1b[0m"
