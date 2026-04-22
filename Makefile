@@ -14,8 +14,8 @@ $(VENV)/bin/activate: requirements.txt
 
 setup: $(VENV)/bin/activate
 
-config_merged.yaml: setup merge_blame.py config_general.yaml config_rcm_old.yaml
-	$(PYTHON) merge_blame.py config_general.yaml config_rcm_old.yaml > config_merged.yaml
+config_merged.yaml: setup merge_blame.py config_general.yaml config_rcm_old.yaml config_rcm_fixed.yaml
+	$(PYTHON) merge_blame.py config_general.yaml config_rcm_old.yaml config_rcm_fixed.yaml > config_merged.yaml
 
 # Example run command using the config file
 run: setup config_merged.yaml

@@ -1,0 +1,7 @@
+
+patches:
+  fix_rust_system_openssl:
+    origin_name: "new_updates"
+    origin_url: "https://gitlab.hpc.cineca.it/HpcUserSupport/spack-deploy/clones/spack-packages-updates"
+    branch: "fix_rust_system_openssl"
+

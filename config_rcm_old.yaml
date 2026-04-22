@@ -7,9 +7,6 @@ patches:
     origin_name: "old_local_rcm_clone"
     # origin_url omitted: autofilled from the first 'updates' entry above
     branch: "fix/paraview_cuda12_rebased"
-  fix_rust_system_openssl:
-    origin_name: "old_local_rcm_clone"
-    branch: "packages/dev/fix_rust_system_openssl_rebased"
   libjpeg_turbo_java:
     origin_name: "old_local_rcm_clone"
     branch: "packages/dev/libjpeg_turbo_java_rebased"
