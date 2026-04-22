@@ -8,6 +8,11 @@ import re
 import shutil
 import json
 
+
+RED = "\033[31m"
+YELLOW = "\033[33m"
+RESET = "\033[0m"
+
 class MultiRepoManager:
     def __init__(self, config_path, local_path, debug=False, refresh_cache=False):
         self.local_path = os.path.abspath(local_path)
@@ -16,6 +21,7 @@ class MultiRepoManager:
         
         self.affected_files = {}   # Maps filename -> list of patch names that touch it
         self.successful_patches = []
+        self.failed_patches = {}    # Maps patch name -> failure reason
         self.repo_urls = {}          # Maps origin_name -> resolved URL
         self.cache_root = os.path.join(self.local_path, ".sprm_cache")
         self.url_cache_dirs = {}     # Maps origin_url -> local cache dir (regular patches)
@@ -33,6 +39,19 @@ class MultiRepoManager:
         self._normalize_patches()
         # Resolve all repo URLs from config
         self._resolve_repo_urls()
+
+    def _red(self, text):
+        return f"{RED}{text}{RESET}"
+
+    def _yellow(self, text):
+        return f"{YELLOW}{text}{RESET}"
+
+    def _warn(self, text):
+        self.logger.warning(self._yellow(text))
+
+    def _mark_patch_failed(self, patch_name, reason):
+        # Keep the first concrete reason if the same patch encounters multiple failures.
+        self.failed_patches.setdefault(patch_name, reason)
 
     def _normalize_patches(self):
         """Convert patches from dict-keyed YAML schema to internal list of dicts.
@@ -90,7 +109,7 @@ class MultiRepoManager:
 
             if origin_url:
                 if origin_name in self.repo_urls and self.repo_urls[origin_name] != origin_url:
-                    self.logger.warning(
+                    self._warn(
                         f"Origin '{origin_name}' has conflicting URLs: "
                         f"'{self.repo_urls[origin_name]}' vs '{origin_url}'. Using latest: '{origin_url}'"
                     )
@@ -106,7 +125,7 @@ class MultiRepoManager:
             if restructured is not None:
                 prev = origin_patch_opts[origin_name]['restructured']
                 if prev is not None and prev != restructured:
-                    self.logger.warning(
+                    self._warn(
                         f"Origin '{origin_name}' has conflicting 'restructured' values: "
                         f"'{prev}' vs '{restructured}'. Using latest: '{restructured}'"
                     )
@@ -115,7 +134,7 @@ class MultiRepoManager:
             if filter_path:
                 prev = origin_patch_opts[origin_name]['filter_path']
                 if prev and prev != filter_path:
-                    self.logger.warning(
+                    self._warn(
                         f"Origin '{origin_name}' has conflicting 'filter_path' values: "
                         f"'{prev}' vs '{filter_path}'. Using latest: '{filter_path}'"
                     )
@@ -124,7 +143,7 @@ class MultiRepoManager:
             if filter_path_rename:
                 prev = origin_patch_opts[origin_name]['filter_path_rename']
                 if prev and prev != filter_path_rename:
-                    self.logger.warning(
+                    self._warn(
                         f"Origin '{origin_name}' has conflicting 'filter_path_rename' values: "
                         f"'{prev}' vs '{filter_path_rename}'. Using latest: '{filter_path_rename}'"
                     )
@@ -339,7 +358,9 @@ class MultiRepoManager:
         
         if result.returncode != 0:
             if check:
-                self.logger.error(f"Failed: {' '.join(cmd)}\n{result.stderr.strip()}")
+                self.logger.error(
+                    self._red(f"Failed: {' '.join(cmd)}\n{result.stderr.strip()}")
+                )
             return None
         return result.stdout.strip()
 
@@ -396,7 +417,7 @@ class MultiRepoManager:
         
         if checkout_res is None:
             # Fallback: if the remote ref mapping failed, try checking out the fetch head directly
-            self.logger.warning("Standard checkout failed, attempting fallback to FETCH_HEAD...")
+            self._warn("Standard checkout failed, attempting fallback to FETCH_HEAD...")
             self._run(["checkout", "-B", base_branch, "FETCH_HEAD"])
 
     def apply_patches(self):
@@ -443,11 +464,13 @@ class MultiRepoManager:
                     self.logger.error(
                         f"Could not fetch filtered branch '{branch}' from '{name}'. Skipping."
                     )
+                    self._mark_patch_failed(local_branch, "failed to fetch filtered branch")
                     continue
 
                 # Start from a clean branch rooted at the upstream base
                 if self._run(["checkout", "-B", local_branch, base_ref]) is None:
                     self.logger.error(f"Failed to checkout '{local_branch}' from {base_ref}. Skipping.")
+                    self._mark_patch_failed(local_branch, "failed to checkout local branch from upstream base")
                     continue
 
                 # Determine commit range: last reachable tag → tip of remote branch
@@ -460,6 +483,7 @@ class MultiRepoManager:
                         f"No tags found on '{remote_branch_ref}'. "
                         f"Cannot determine cherry-pick range. Skipping."
                     )
+                    self._mark_patch_failed(local_branch, "no tag found to define cherry-pick range")
                     continue
 
                 commits_out = self._run(
@@ -468,7 +492,7 @@ class MultiRepoManager:
                 commits = [c for c in (commits_out or "").splitlines() if c][::-1]  # oldest first
 
                 if not commits:
-                    self.logger.warning(
+                    self._warn(
                         f"No commits in range '{last_tag}..{remote_branch_ref}'. Nothing to cherry-pick."
                     )
                     continue
@@ -477,8 +501,9 @@ class MultiRepoManager:
                     f"Cherry-picking {len(commits)} commit(s) from '{last_tag}..{remote_branch_ref}'..."
                 )
                 if self._run(["cherry-pick"] + commits) is None:
-                    self.logger.warning(f"Cherry-pick conflict in '{local_branch}'. Aborting.")
+                    self._warn(f"Cherry-pick conflict in '{local_branch}'. Aborting.")
                     self._run(["cherry-pick", "--abort"], check=False)
+                    self._mark_patch_failed(local_branch, "cherry-pick conflict")
                     continue
 
             else:
@@ -492,16 +517,19 @@ class MultiRepoManager:
                     self.logger.error(
                         f"Could not fetch cached branch '{branch}' from '{name}'. Skipping."
                     )
+                    self._mark_patch_failed(local_branch, "failed to fetch cached branch")
                     continue
 
                 if self._run(["checkout", "-B", local_branch, f"{name}/{branch}"]) is None:
                     self.logger.error(f"Failed to checkout '{local_branch}'. Skipping.")
+                    self._mark_patch_failed(local_branch, "failed to checkout local branch")
                     continue
 
                 self.logger.info(f"Rebasing '{local_branch}' onto {base_ref}...")
                 if self._run(["rebase", base_ref]) is None:
-                    self.logger.warning(f"Rebase conflict in '{local_branch}'. Aborting.")
+                    self._warn(f"Rebase conflict in '{local_branch}'. Aborting.")
                     self._run(["rebase", "--abort"], check=False)
+                    self._mark_patch_failed(local_branch, "rebase conflict")
                     continue
 
             self.successful_patches.append(local_branch)
@@ -535,6 +563,14 @@ class MultiRepoManager:
         self.logger.info("\n=== SUCCESSFUL PATCHES ===")
         for p in self.successful_patches:
             self.logger.info(f" - {p}")
+
+        self.logger.info("\n=== FAILED PATCHES ===")
+        if self.failed_patches:
+            for patch_name, reason in sorted(self.failed_patches.items()):
+                self.logger.error(self._red(f" - {patch_name}: {reason}"))
+        else:
+            self.logger.info(" - none")
+
         self.logger.info(f"\nTotal affected files: {len(self.affected_files)}")
         for fname, patches in sorted(self.affected_files.items()):
             self.logger.info(f"  {fname}")
