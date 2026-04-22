@@ -14,7 +14,7 @@ YELLOW = "\033[33m"
 RESET = "\033[0m"
 
 class MultiRepoManager:
-    def __init__(self, config_path, local_path, debug=False, refresh_cache=False):
+    def __init__(self, config_path, local_path, debug=False, refresh_cache=False, failure_root=None):
         self.local_path = os.path.abspath(local_path)
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
@@ -24,9 +24,11 @@ class MultiRepoManager:
         self.failed_patches = {}    # Maps patch name -> failure reason
         self.repo_urls = {}          # Maps origin_name -> resolved URL
         self.cache_root = os.path.join(self.local_path, ".sprm_cache")
+        self.failure_root = os.path.abspath(failure_root) if failure_root else None
         self.url_cache_dirs = {}     # Maps origin_url -> local cache dir (regular patches)
         self.patch_cache_dirs = {}   # Maps patch name -> cache dir
         self.refresh_cache = refresh_cache  # Force cache refetch if True
+        self.last_failed_git_command = None
         
         # Setup Logging
         log_level = logging.DEBUG if debug else logging.INFO
@@ -52,6 +54,37 @@ class MultiRepoManager:
     def _mark_patch_failed(self, patch_name, reason):
         # Keep the first concrete reason if the same patch encounters multiple failures.
         self.failed_patches.setdefault(patch_name, reason)
+
+    def _snapshot_failed_patch(self, patch_name):
+        if not self.failure_root:
+            return None
+
+        snapshot_dir = os.path.join(self.failure_root, self._sanitize_name(patch_name))
+        if os.path.exists(snapshot_dir):
+            shutil.rmtree(snapshot_dir)
+
+        os.makedirs(self.failure_root, exist_ok=True)
+        shutil.copytree(
+            self.local_path,
+            snapshot_dir,
+            symlinks=True,
+            ignore=shutil.ignore_patterns(".sprm_cache"),
+        )
+
+        metadata = {
+            "patch": patch_name,
+            "source_repo": self.local_path,
+            "snapshot_repo": snapshot_dir,
+            "failed_command": self.last_failed_git_command,
+        }
+        metadata_path = os.path.join(snapshot_dir, "sprm_failure_context.json")
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2, sort_keys=True)
+
+        self._warn(
+            f"Saved cherry-pick failure snapshot for '{patch_name}' to {snapshot_dir}"
+        )
+        return snapshot_dir
 
     def _normalize_patches(self):
         """Convert patches from dict-keyed YAML schema to internal list of dicts.
@@ -355,8 +388,16 @@ class MultiRepoManager:
         
         # Ensure the execution path exists before running (unless it's the parent for a clone)
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=execution_path)
+        self.last_failed_git_command = None
         
         if result.returncode != 0:
+            self.last_failed_git_command = {
+                "cmd": cmd,
+                "cwd": execution_path,
+                "returncode": result.returncode,
+                "stdout": result.stdout.strip(),
+                "stderr": result.stderr.strip(),
+            }
             if check:
                 self.logger.error(
                     self._red(f"Failed: {' '.join(cmd)}\n{result.stderr.strip()}")
@@ -501,9 +542,13 @@ class MultiRepoManager:
                     f"Cherry-picking {len(commits)} commit(s) from '{last_tag}..{remote_branch_ref}'..."
                 )
                 if self._run(["cherry-pick"] + commits) is None:
+                    snapshot_dir = self._snapshot_failed_patch(local_branch)
                     self._warn(f"Cherry-pick conflict in '{local_branch}'. Aborting.")
                     self._run(["cherry-pick", "--abort"], check=False)
-                    self._mark_patch_failed(local_branch, "cherry-pick conflict")
+                    reason = "cherry-pick conflict"
+                    if snapshot_dir:
+                        reason = f"{reason} (snapshot: {snapshot_dir})"
+                    self._mark_patch_failed(local_branch, reason)
                     continue
 
             else:
@@ -720,14 +765,22 @@ if __name__ == "__main__":
         if not work_path:
             parser.error("Missing local work directory: set --path or define local_folders.path/clone in config.yaml")
 
-        mgr = MultiRepoManager(args.config, work_path, args.debug, args.refresh_cache)
+        workdir_path = local_folders.get("path") or os.path.dirname(os.path.abspath(work_path))
+        failure_root = f"{workdir_path}fail"
+
+        mgr = MultiRepoManager(
+            args.config,
+            work_path,
+            args.debug,
+            args.refresh_cache,
+            failure_root=failure_root,
+        )
         mgr.setup_base()
         mgr.prepare_patch_caches()
         mgr.apply_patches()
         mgr.create_integration()
         mgr.summary()
 
-        workdir_path = local_folders.get("path") or os.path.dirname(os.path.abspath(work_path))
         os.makedirs(workdir_path, exist_ok=True)
         summary_json_path = os.path.join(workdir_path, "clone_summary_by_dir.json")
         with open(summary_json_path, "w") as f:
