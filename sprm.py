@@ -604,18 +604,51 @@ def resolve_local_folders(cfg, path_override=None):
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser()
+    bootstrap = argparse.ArgumentParser(add_help=False)
+    bootstrap.add_argument("--config", default="config.yaml")
+    bootstrap.add_argument("--path")
+    bootstrap_args, _ = bootstrap.parse_known_args()
+
+    default_clone_path = None
+    default_repo_path = None
+    try:
+        with open(bootstrap_args.config, 'r') as f:
+            bootstrap_cfg = yaml.safe_load(f) or {}
+        bootstrap_local_folders = resolve_local_folders(bootstrap_cfg, bootstrap_args.path)
+        default_clone_path = bootstrap_local_folders.get("clone_path")
+        default_repo_path = bootstrap_local_folders.get("repo_path")
+    except (OSError, ValueError, yaml.YAMLError):
+        # Keep parser construction resilient; final parse/execution will report actionable errors.
+        pass
+
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument("--config", default="config.yaml", help="Path to YAML config")
     parser.add_argument("--path", help="Base local_folders.path override")
     parser.add_argument("--debug", action="store_true")
 
     subparsers = parser.add_subparsers(dest="command")
 
-    clone_parser = subparsers.add_parser("clone", help="Clone/apply/merge patches workflow")
+    clone_parser = subparsers.add_parser(
+        "clone",
+        help="Clone/apply/merge patches workflow",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     clone_parser.add_argument(
         "--refresh-cache",
         action="store_true",
         help="Force refetch of all cached branches",
+    )
+    clone_parser.add_argument(
+        "--clone_path",
+        help="Optional clone path override (defaults to local_folders.clone_path from config)",
+        default=default_clone_path,
+    )
+    clone_parser.add_argument(
+        "--repo_path",
+        help="Optional repo path override (defaults to local_folders.repo_path from config)",
+        default=default_repo_path,
     )
 
     args = parser.parse_args()
@@ -629,7 +662,10 @@ if __name__ == "__main__":
         except ValueError as e:
             parser.error(str(e))
 
-        work_path = local_folders.get("clone_path")
+        work_path = args.clone_path or local_folders.get("clone_path")
+        repo_path = args.repo_path or local_folders.get("repo_path")
+        local_folders["clone_path"] = work_path
+        local_folders["repo_path"] = repo_path
         if not work_path:
             parser.error("Missing local work directory: set --path or define local_folders.path/clone in config.yaml")
 
