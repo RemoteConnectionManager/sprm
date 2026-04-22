@@ -6,6 +6,7 @@ import os
 import hashlib
 import re
 import shutil
+import json
 
 class MultiRepoManager:
     def __init__(self, config_path, local_path, debug=False, refresh_cache=False):
@@ -540,6 +541,20 @@ class MultiRepoManager:
             for p in patches:
                 self.logger.info(f"    <- {p}")
 
+    def summary_by_directory(self):
+        """Return mapping: directory -> unique list of patches affecting files in that directory."""
+        by_dir = {}
+        for fname, patches in self.affected_files.items():
+            dirname = os.path.dirname(fname) or "."
+            by_dir.setdefault(dirname, [])
+            by_dir[dirname].extend(patches)
+
+        # Deduplicate while preserving first-seen order for each directory.
+        for dirname, patch_list in by_dir.items():
+            by_dir[dirname] = list(dict.fromkeys(patch_list))
+
+        return by_dir
+
 
 def resolve_local_folders(cfg, path_override=None):
     """Normalize local_folders settings and compute effective clone/repo paths.
@@ -675,6 +690,13 @@ if __name__ == "__main__":
         mgr.apply_patches()
         mgr.create_integration()
         mgr.summary()
+
+        workdir_path = local_folders.get("path") or os.path.dirname(os.path.abspath(work_path))
+        os.makedirs(workdir_path, exist_ok=True)
+        summary_json_path = os.path.join(workdir_path, "clone_summary_by_dir.json")
+        with open(summary_json_path, "w") as f:
+            json.dump(mgr.summary_by_directory(), f, indent=2, sort_keys=True)
+        mgr.logger.info(f"Wrote directory summary JSON to {summary_json_path}")
     else:
         parser.error("No subcommand provided. Use 'clone'.")
 
