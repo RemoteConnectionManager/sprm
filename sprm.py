@@ -348,6 +348,7 @@ class MultiRepoManager:
         base_branch = self.config['upstream']['base_branch']
         
         parent_dir = os.path.dirname(self.local_path) or "."
+        os.makedirs(parent_dir, exist_ok=True)
         repo_name = os.path.basename(self.local_path)
 
         # 1. Handle Initial Clone
@@ -540,7 +541,7 @@ class MultiRepoManager:
                 self.logger.info(f"    <- {p}")
 
 
-def resolve_local_folders(cfg):
+def resolve_local_folders(cfg, path_override=None):
     """Normalize local_folders settings and compute effective clone/repo paths.
 
     Supported schema:
@@ -549,12 +550,16 @@ def resolve_local_folders(cfg):
         clone: clone_subdir_or_abs_path      # optional, defaults to "clone"
         repo:  repo_subdir_or_abs_path       # optional, no default
 
+    path_override, when provided, overrides local_folders.path from config.
     """
     local_folders = cfg.get("local_folders") or {}
     if not isinstance(local_folders, dict):
         local_folders = {}
 
-    path = local_folders.get("path")
+    if isinstance(path_override, str):
+        path_override = path_override.strip() or None
+
+    path = path_override if path_override is not None else local_folders.get("path")
     local_folders["path"] = path
 
     def _resolve_path(value, base_path):
@@ -601,27 +606,39 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="config.yaml", help="Path to YAML config")
-    parser.add_argument("--path", help="Local work directory (overrides local_folders.path in config)")
+    parser.add_argument("--path", help="Base local_folders.path override")
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--refresh-cache", action="store_true", help="Force refetch of all cached branches")
+
+    subparsers = parser.add_subparsers(dest="command")
+
+    clone_parser = subparsers.add_parser("clone", help="Clone/apply/merge patches workflow")
+    clone_parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="Force refetch of all cached branches",
+    )
+
     args = parser.parse_args()
 
-    with open(args.config, 'r') as f:
-        cfg = yaml.safe_load(f) or {}
+    if args.command == "clone":
+        with open(args.config, 'r') as f:
+            cfg = yaml.safe_load(f) or {}
 
-    try:
-        local_folders = resolve_local_folders(cfg)
-    except ValueError as e:
-        parser.error(str(e))
+        try:
+            local_folders = resolve_local_folders(cfg, args.path)
+        except ValueError as e:
+            parser.error(str(e))
 
-    work_path = args.path or local_folders.get("clone_path")
-    if not work_path:
-        parser.error("Missing local work directory: set --path or define local_folders.path/clone in config.yaml")
+        work_path = local_folders.get("clone_path")
+        if not work_path:
+            parser.error("Missing local work directory: set --path or define local_folders.path/clone in config.yaml")
 
-    mgr = MultiRepoManager(args.config, work_path, args.debug, args.refresh_cache)
-    mgr.setup_base()
-    mgr.prepare_patch_caches()
-    mgr.apply_patches()
-    mgr.create_integration()
-    mgr.summary()
+        mgr = MultiRepoManager(args.config, work_path, args.debug, args.refresh_cache)
+        mgr.setup_base()
+        mgr.prepare_patch_caches()
+        mgr.apply_patches()
+        mgr.create_integration()
+        mgr.summary()
+    else:
+        parser.error("No subcommand provided. Use 'clone'.")
 
