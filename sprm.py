@@ -645,6 +645,7 @@ def resolve_local_folders(cfg, path_override=None):
         path: ./workdir
         clone: clone_subdir_or_abs_path      # optional, defaults to "clone"
         repo:  repo_subdir_or_abs_path       # optional, no default
+                failure_root: failure_subdir_or_abs_path  # optional, defaults to "fail" under local_folders.path
 
     path_override, when provided, overrides local_folders.path from config.
     """
@@ -695,6 +696,19 @@ def resolve_local_folders(cfg, path_override=None):
         repo_value = repo_value.get("path")
     repo_path = _resolve_path(repo_value, base_path)
     local_folders["repo_path"] = repo_path
+
+    # failure_root: optional. Missing/empty defaults to "fail" under local_folders.path.
+    failure_value = local_folders.get("failure_root")
+    if isinstance(failure_value, dict):
+        # Backward-compatible support: if older dict syntax is present, read path key.
+        failure_value = failure_value.get("path")
+    if isinstance(failure_value, str) and failure_value.strip():
+        failure_root = _resolve_path(failure_value, base_path)
+        if failure_root is None:
+            raise ValueError("Unable to resolve local_folders.failure_root path; define local_folders.path for relative failure_root values")
+    else:
+        failure_root = os.path.join(base_path, "fail") if base_path else None
+    local_folders["failure_root"] = failure_root
 
     return local_folders
 
@@ -766,7 +780,7 @@ if __name__ == "__main__":
             parser.error("Missing local work directory: set --path or define local_folders.path/clone in config.yaml")
 
         workdir_path = local_folders.get("path") or os.path.dirname(os.path.abspath(work_path))
-        failure_root = f"{workdir_path}fail"
+        failure_root = local_folders.get("failure_root")
 
         mgr = MultiRepoManager(
             args.config,
