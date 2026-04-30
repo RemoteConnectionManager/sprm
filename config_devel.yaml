@@ -1,0 +1,8 @@
+upstream:
+  base_branch: "develop"
+local_folders:
+  path: "./workdir_dev"
+  failure_root: "failed_patches"
+  repo: "repo_test"
+
+

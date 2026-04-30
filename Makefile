@@ -17,11 +17,16 @@ setup: $(VENV)/bin/activate
 config_merged.yaml: setup merge_blame.py config_general.yaml config_rcm_old.yaml config_rcm_fixed.yaml
 	$(PYTHON) merge_blame.py config_general.yaml config_rcm_old.yaml config_rcm_fixed.yaml > config_merged.yaml
 
+config_merged_dev.yaml: setup merge_blame.py config_general.yaml config_devel.yaml config_rcm_old.yaml config_rcm_fixed.yaml
+	$(PYTHON) merge_blame.py config_general.yaml config_devel.yaml config_rcm_old.yaml config_rcm_fixed.yaml > config_merged_dev.yaml
+
 show_blame: setup merge_blame.py config_general.yaml config_rcm_old.yaml config_rcm_fixed.yaml
 	$(PYTHON) merge_blame.py --blame config_general.yaml config_rcm_old.yaml config_rcm_fixed.yaml 
 # Example run command using the config file
 run: setup config_merged.yaml
-	$(PYTHON) sprm.py --config config_merged.yaml 
+	$(PYTHON) sprm.py --config config_merged.yaml  clone
+run_dev: setup config_merged_dev.yaml
+	$(PYTHON) sprm.py --config config_merged_dev.yaml --debug clone 
 run_cluster: setup config_merged.yaml
 	$(PYTHON) sprm.py --config config_merged.yaml --path $TMPDIR/$USER/spack_rcm_packages
 
