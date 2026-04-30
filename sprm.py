@@ -645,7 +645,7 @@ def resolve_local_folders(cfg, path_override=None):
         path: ./workdir
         clone: clone_subdir_or_abs_path      # optional, defaults to "clone"
         repo:  repo_subdir_or_abs_path       # optional, no default
-                failure_root: failure_subdir_or_abs_path  # optional, defaults to "fail" under local_folders.path
+        failure_root: failure_subdir_or_abs_path  # optional, defaults to "fail" under local_folders.path
 
     path_override, when provided, overrides local_folders.path from config.
     """
