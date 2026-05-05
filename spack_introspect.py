@@ -19,6 +19,8 @@ class SpackIntrospector:
         # Insert paths at the beginning to override any local spack installs
         sys.path.insert(0, lib_path)
         sys.path.insert(0, ext_path)
+        sys.path.append(os.path.join(ext_path, "_vendoring"))
+        #print(sys.path)
 
         # SPACK_ROOT must point to the target instance for $spack resolution
         os.environ["SPACK_ROOT"] = self.spack_root
