@@ -1,0 +1,14 @@
+
+cluster:
+  region: "us-east"
+  apps: ["worker", "cache"] # Appends cleanly into context arrays
+  port_base: 9000
+
+services:
+  {% for app in cluster.apps %}
+  {{ app }}:
+    type: "probe"
+  {{ app }}-healthcheck:
+#  - name: "{{ app }}-healthcheck"
+    type: "check"
+  {% endfor %}

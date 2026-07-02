@@ -1,0 +1,13 @@
+
+cluster:
+  region: "eu-west"
+  apps: ["frontend", "backend"]
+  port_base: 8000
+
+services:
+  {% for app in cluster.apps %}
+  {{ app }}:
+#luigi  - name: "{{ app }}"
+    env: "{{ cluster.region }}"
+    url: "http://{{ app }}.{{ cluster.region }}.internal:{{ cluster.port_base + loop.index0 }}"
+  {% endfor %}

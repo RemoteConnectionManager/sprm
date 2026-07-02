@@ -1,0 +1,42 @@
+cluster:
+  region: us-east
+  apps:
+  - frontend
+  - backend
+  - worker
+  - cache
+  port_base: 9000
+
+services:
+  frontend:
+#luigi  - name: "frontend"
+    env: us-east
+    url: http://frontend.us-east.internal:9000
+    type: probe
+  backend:
+#luigi  - name: "backend"
+    env: us-east
+    url: http://backend.us-east.internal:9001
+    type: probe
+  worker:
+#luigi  - name: "worker"
+    env: us-east
+    url: http://worker.us-east.internal:9002
+    type: probe
+  cache:
+#luigi  - name: "cache"
+    env: us-east
+    url: http://cache.us-east.internal:9003
+    type: probe
+  frontend-healthcheck:
+#  - name: "frontend-healthcheck"
+    type: check
+  backend-healthcheck:
+#  - name: "backend-healthcheck"
+    type: check
+  worker-healthcheck:
+#  - name: "worker-healthcheck"
+    type: check
+  cache-healthcheck:
+#  - name: "cache-healthcheck"
+    type: check
